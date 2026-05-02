@@ -141,11 +141,14 @@ class Task(Base):
     name = Column(String(160), nullable=False)
     task_type = Column(String(40), nullable=False)
     # task_type: classify | retrieve | call_endpoint | transform |
-    #            call_model | validate | generate | escalate | approval | loop
+    #            call_model | validate | generate | escalate | approval | loop | branch
     order_index = Column(Integer, default=0)
     config = Column(JSON, default=dict)
     # depends_on: list of task ids (or names) within the same workflow
     depends_on = Column(JSON, default=list)
+    # condition: optional expression (e.g., `intent == "billing"`) gating execution.
+    # Empty/null → always run. Evaluated by execution_engine against the workflow context.
+    condition = Column(Text)
     preconditions = Column(Text)
     postconditions = Column(Text)
     timeout_seconds = Column(Integer, default=30)

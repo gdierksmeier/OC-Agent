@@ -2,6 +2,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentsApi, endpointsApi, executionsApi, modelsApi, promptsApi, workflowsApi } from '../api.js'
+import WorkflowVisualizer from '../components/WorkflowVisualizer.vue'
 
 const props = defineProps({ id: { type: [String, Number], required: true } })
 const route = useRoute()
@@ -68,6 +69,7 @@ async function load() {
             prompt_id: t.prompt_id,
             config: t.config || {},
             depends_on: Array.isArray(t.depends_on) ? t.depends_on : [],
+            condition: t.condition || '',
             preconditions: t.preconditions || '',
             postconditions: t.postconditions || '',
             configJson: JSON.stringify(t.config || {}, null, 2),
@@ -97,6 +99,7 @@ function addWorkflowTask(workflowId) {
     prompt_id: null,
     config: {},
     depends_on: [],
+    condition: '',
     preconditions: '',
     postconditions: '',
     configJson: '{}',
@@ -140,6 +143,7 @@ async function saveWorkflow(workflowId) {
         prompt_id: t.prompt_id || null,
         config: parsedConfig,
         depends_on: parsedDependsOn,
+        condition: t.condition?.trim() ? t.condition.trim() : null,
         preconditions: t.preconditions || null,
         postconditions: t.postconditions || null,
       }
@@ -362,6 +366,15 @@ watch(
             <label class="form-label">Workflow description</label>
             <input v-model="workflowDrafts[wf.id].description" class="form-control">
           </div>
+
+          <WorkflowVisualizer
+            v-model:tasks="workflowDrafts[wf.id].tasks"
+            :endpoints="endpoints"
+            :models="models"
+            :prompts="prompts"
+            :title="workflowDrafts[wf.id].name"
+          />
+
           <table class="table">
             <thead>
               <tr><th>#</th><th>Task</th><th>Type</th><th>Timeout</th><th>Retry</th><th>Error policy</th><th></th></tr>
@@ -381,6 +394,7 @@ watch(
                     <option value="validate">validate</option>
                     <option value="escalate">escalate</option>
                     <option value="approval">approval</option>
+                    <option value="branch">branch</option>
                   </select>
                 </td>
                 <td><input v-model.number="t.timeout_seconds" type="number" class="form-control" style="width:90px"></td>
@@ -422,6 +436,14 @@ watch(
                         <option v-for="p in prompts" :key="p.id" :value="p.id">{{ p.name }} (#{{ p.id }})</option>
                       </select>
                     </div>
+                  </div>
+                  <div class="form-row">
+                    <label class="form-label">Condition (gates execution — leave blank to always run)</label>
+                    <input
+                      v-model="t.condition"
+                      class="form-control text-mono"
+                      placeholder='e.g.  intent == "billing"   or   confidence > 0.8'
+                    >
                   </div>
                   <div class="form-row two-col">
                     <div>
