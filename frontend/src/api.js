@@ -72,6 +72,12 @@ export const dashboardApi = {
   createBudget: (data) => api.post('/dashboard/budgets', data).then(r => r.data),
 }
 
+// ---------- System ----------
+export const systemApi = {
+  info: () => api.get('/system/info').then(r => r.data),
+  health: () => api.get('/health').then(r => r.data),
+}
+
 // ---------- Environment Settings ----------
 export const environmentSettingsApi = {
   list: (params = {}) => api.get('/environment-settings', { params }).then(r => r.data),

@@ -213,6 +213,7 @@ class TaskBase(BaseModel):
     order_index: int = 0
     config: dict = Field(default_factory=dict)
     depends_on: list = Field(default_factory=list)
+    condition: Optional[str] = None
     preconditions: Optional[str] = None
     postconditions: Optional[str] = None
     timeout_seconds: int = 30

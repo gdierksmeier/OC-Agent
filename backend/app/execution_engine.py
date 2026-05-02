@@ -32,6 +32,61 @@ from . import models
 _VAR_PATTERN = re.compile(r"\{\{\s*([\w\.]+)\s*\}\}")
 
 
+def _build_eval_namespace(context: dict[str, Any]) -> dict[str, Any]:
+    """Flatten context into a namespace usable by condition expressions.
+    Exposes: input, variables, last_output, plus shorthand top-level access
+    to keys inside variables and last_output.
+    """
+    ns: dict[str, Any] = {
+        "input": context.get("input", {}),
+        "variables": context.get("variables", {}),
+        "last_output": context.get("last_output", {}),
+        # Constants for ergonomic conditions
+        "true": True,
+        "false": False,
+        "null": None,
+        "none": None,
+    }
+    # Shorthand: `intent` instead of `last_output['intent']` or `variables['intent']`.
+    last = context.get("last_output", {})
+    if isinstance(last, dict):
+        for k, v in last.items():
+            ns.setdefault(k, v)
+    for k, v in (context.get("variables", {}) or {}).items():
+        ns.setdefault(k, v)
+    return ns
+
+
+_SAFE_BUILTINS = {
+    "abs": abs, "len": len, "min": min, "max": max,
+    "int": int, "float": float, "str": str, "bool": bool,
+    "round": round,
+}
+
+
+def evaluate_condition(expr: str | None, context: dict[str, Any]) -> bool:
+    """Evaluate a workflow gating expression.
+
+    - None / empty / 'true' / 'else' / '*' → always True (always run).
+    - Any other string → evaluated as a Python expression with the workflow
+      context (input, variables, last_output, plus shorthand keys) in scope.
+      Built-ins are restricted; if evaluation fails, returns False.
+    """
+    if not expr:
+        return True
+    raw = expr.strip()
+    if not raw or raw.lower() in ("true", "else", "default", "*"):
+        return True
+    if raw.lower() == "false":
+        return False
+    namespace = _build_eval_namespace(context)
+    try:
+        result = eval(raw, {"__builtins__": _SAFE_BUILTINS}, namespace)  # noqa: S307
+        return bool(result)
+    except Exception:
+        return False
+
+
 def _resolve_template(text: str, context: dict[str, Any]) -> str:
     """Replace {{ var.path }} placeholders using values from context."""
     if not text:
@@ -217,6 +272,17 @@ def _run_task(
             # Placeholder — real impl would pause execution and queue approval.
             result["output"] = {"approval": "auto_approved_in_simulator"}
 
+        elif task.task_type == "branch":
+            # Decision node: doesn't transform data — it lets downstream tasks
+            # gate on conditions. We simply echo the existing context for traceability.
+            result["output"] = {
+                "branch": True,
+                "context_snapshot": {
+                    "last_output": context.get("last_output"),
+                    "variables": context.get("variables", {}),
+                },
+            }
+
         else:
             # Unknown / loop / future types — succeed with passthrough
             result["output"] = {"note": f"Task type '{task.task_type}' executed (passthrough)"}
@@ -338,6 +404,29 @@ def execute_agent(
         db.add(step)
     else:
         for task in workflow.tasks:
+            # Conditional branching: skip the task entirely if its gating
+            # expression evaluates to false against the current context.
+            condition = getattr(task, "condition", None)
+            if condition and not evaluate_condition(condition, context):
+                step = models.ExecutionStep(
+                    execution_id=execution.id,
+                    task_id=task.id,
+                    step_name=task.name,
+                    step_type=task.task_type,
+                    status="skipped",
+                    input_data={"condition": condition, "evaluated": False},
+                    output_data={"skipped_reason": "condition not met"},
+                    started_at=datetime.utcnow(),
+                    completed_at=datetime.utcnow(),
+                    latency_ms=0,
+                    cost=0.0,
+                    tokens_input=0,
+                    tokens_output=0,
+                )
+                db.add(step)
+                db.flush()
+                continue
+
             result = _run_task(task, context, db)
             total_cost += result["cost"]
             total_in += result["tokens_input"]
