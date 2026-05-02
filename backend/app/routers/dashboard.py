@@ -126,6 +126,87 @@ def cost_summary(days: int = 30, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/timeseries")
+def timeseries(days: int = 30, db: Session = Depends(get_db)):
+    """Daily execution counts per status + overall status breakdown +
+    top agents by run count, all over the last N days."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    execs = (
+        db.query(models.Execution)
+        .filter(models.Execution.started_at >= cutoff)
+        .all()
+    )
+
+    # Build a complete daily series so missing days show as 0 (good for charts).
+    today = datetime.utcnow().date()
+    daily: dict[str, dict[str, float]] = {}
+    for offset in range(days, -1, -1):
+        d = (today - timedelta(days=offset)).isoformat()
+        daily[d] = {
+            "date": d,
+            "success": 0,
+            "failed": 0,
+            "escalated": 0,
+            "other": 0,
+            "total": 0,
+            "cost": 0.0,
+            "latency_ms": 0,
+        }
+
+    status_counts: dict[str, int] = defaultdict(int)
+    agent_counts: dict[int | None, int] = defaultdict(int)
+    latency_acc: dict[str, list[int]] = defaultdict(list)
+
+    for e in execs:
+        d = e.started_at.date().isoformat()
+        if d not in daily:
+            continue
+        bucket = daily[d]
+        bucket["total"] += 1
+        bucket["cost"] += e.total_cost or 0
+        if e.status == "success":
+            bucket["success"] += 1
+        elif e.status == "failed":
+            bucket["failed"] += 1
+        elif e.status == "escalated":
+            bucket["escalated"] += 1
+        else:
+            bucket["other"] += 1
+        if e.total_latency_ms:
+            latency_acc[d].append(e.total_latency_ms)
+        status_counts[e.status or "other"] += 1
+        agent_counts[e.agent_id] += 1
+
+    for d, samples in latency_acc.items():
+        daily[d]["latency_ms"] = round(sum(samples) / len(samples)) if samples else 0
+
+    # Round costs for cleanliness
+    series = []
+    for d in sorted(daily):
+        b = daily[d]
+        b["cost"] = round(b["cost"], 6)
+        series.append(b)
+
+    # Top agents (by run count)
+    top_agents = []
+    for aid, count in sorted(agent_counts.items(), key=lambda x: -x[1])[:5]:
+        a = db.get(models.Agent, aid) if aid else None
+        top_agents.append({
+            "agent_id": aid,
+            "name": a.name if a else "(unknown)",
+            "executions": count,
+        })
+
+    return {
+        "days": days,
+        "daily": series,
+        "status_breakdown": [
+            {"status": k, "count": v} for k, v in sorted(status_counts.items(), key=lambda x: -x[1])
+        ],
+        "top_agents": top_agents,
+    }
+
+
 @router.get("/budgets", response_model=list[schemas.BudgetOut])
 def list_budgets(db: Session = Depends(get_db)):
     return db.query(models.Budget).order_by(models.Budget.created_at.desc()).all()
