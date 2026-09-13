@@ -68,6 +68,7 @@ export const executionsApi = {
 export const dashboardApi = {
   kpis: (days = 30) => api.get('/dashboard/kpis', { params: { days } }).then(r => r.data),
   costSummary: (days = 30) => api.get('/dashboard/cost-summary', { params: { days } }).then(r => r.data),
+  timeseries: (days = 30) => api.get('/dashboard/timeseries', { params: { days } }).then(r => r.data),
   budgets: () => api.get('/dashboard/budgets').then(r => r.data),
   createBudget: (data) => api.post('/dashboard/budgets', data).then(r => r.data),
 }
